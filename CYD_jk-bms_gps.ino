@@ -13,6 +13,20 @@
 
 BB_SPI_LCD lcd;
 
+#include <TinyGPS++.h>
+
+// Define the RX and TX pins for Serial 2 / GPS
+#define RXD2 22
+#define TXD2 27
+
+#define GPS_BAUD 9600
+
+// The TinyGPS++ object
+TinyGPSPlus gps;
+
+// Create an instance of the HardwareSerial class for Serial 2
+HardwareSerial gpsSerial(2);
+
 //#include "BLEScan.h"
 //JK_B2A24S15P, Address: c8:47:80:03:b5:b5, manufacturer data: 650b88a0c8478003b5b5, serviceNotifyUuid: 0000ffe0-0000-1000-8000-00805f9b34fb, serviceNotifyUuid: 0000fee7-0000-1000-8000-00805f9b34fb
 
@@ -263,16 +277,6 @@ void decode_jk02_cell_info_(const std::vector<uint8_t> &data) {
   //publish_state_("min_cell_voltage_sensor_", min_cell_voltage);
   //publish_state_("max_cell_voltage_sensor_", max_cell_voltage);
 
-  // 54    4   0xFF 0xFF 0x00 0x00    Enabled cells bitmask
-  //           0x0F 0x00 0x00 0x00    4 cells enabled
-  //           0xFF 0x00 0x00 0x00    8 cells enabled
-  //           0xFF 0x0F 0x00 0x00    12 cells enabled
-  //           0xFF 0x1F 0x00 0x00    13 cells enabled
-  //           0xFF 0xFF 0x00 0x00    16 cells enabled
-  //           0xFF 0xFF 0xFF 0x00    24 cells enabled
-  //           0xFF 0xFF 0xFF 0xFF    32 cells enabled
-  // ESP_LOGV(TAG, "Enabled cells bitmask: 0x%02X 0x%02X 0x%02X 0x%02X", data[54 + offset], data[55 + offset],data[56 + offset], data[57 + offset]);
-
   // 58    2   0x00 0x0D              Average Cell Voltage  0.001        V
   //publish_state_("average_cell_voltage_sensor_", (float) jk_get_16bit(58 + offset) * 0.001f);
   average_cell_voltage_sensor = (float) jk_get_16bit(58 + offset) * 0.001f;
@@ -283,11 +287,6 @@ void decode_jk02_cell_info_(const std::vector<uint8_t> &data) {
   //publish_state_("max_voltage_cell_sensor_", (float) data[62 + offset] + 1);
   // 63    1   0x00                   Min voltage cell      1
   //publish_state_("min_voltage_cell_sensor_", (float) data[63 + offset] + 1);
-  // 64    2   0x9D 0x01              Resistance Cell 01    0.001        Ohm
-  // 66    2   0x96 0x01              Resistance Cell 02    0.001        Ohm
-  // 68    2   0x8C 0x01              Resistance Cell 03    0.001        Ohm
-  // ...
-  // 110   2   0x00 0x00              Resistance Cell 24    0.001        Ohm
 
   offset = offset * 2;
 
@@ -297,10 +296,6 @@ void decode_jk02_cell_info_(const std::vector<uint8_t> &data) {
   //  } else {
   //    ESP_LOGD(TAG, "Unknown112: 0x%02X 0x%02X", data[112 + offset], data[113 + offset]);
   //  }
-
-  // 114   4   0x00 0x00 0x00 0x00    Wire resistance warning bitmask (each bit indicates a warning per cell / wire)
-  //  ESP_LOGD(TAG, "Wire resistance warning bitmask: 0x%02X 0x%02X 0x%02X 0x%02X", data[114 + offset], data[115 + offset],
-  //           data[116 + offset], data[117 + offset]);
 
   // 118   4   0x03 0xD0 0x00 0x00    Battery voltage       0.001        V
   total_voltage = (float) jk_get_32bit(118 + offset) * 0.001f;
@@ -319,8 +314,8 @@ void decode_jk02_cell_info_(const std::vector<uint8_t> &data) {
   //  publish_state_("discharging_power_sensor_", std::abs(std::min(0.0f, power)));  // -500W vs 0W -> 500W
 
   // 130   2   0xBE 0x00              Temperature Sensor 1  0.1          °C
-  //  publish_state_("temperatures_[0].temperature_sensor_",
-  //                 (float) ((int16_t) jk_get_16bit(130 + offset)) * 0.1f);
+  publish_state_("temperatures_[0].temperature_sensor_",
+                (float) ((int16_t) jk_get_16bit(130 + offset)) * 0.1f);
 
   // 132   2   0xBF 0x00              Temperature Sensor 2  0.1          °C
   //  publish_state_("temperatures_[1].temperature_sensor_",
@@ -378,40 +373,40 @@ void decode_jk02_cell_info_(const std::vector<uint8_t> &data) {
   state_of_charge_sensor =  (float) data[141 + offset];
   // 142   4   0x8E 0x0B 0x01 0x00    Capacity_Remain      0.001         Ah
   //publish_state_("capacity_remaining_sensor_", (float) jk_get_32bit(142 + offset) * 0.001f);
-  // capacity_remaining_sensor = jk_get_32bit(142 + offset) * 0.001f;
-  capacity_remaining_sensor = (float) jk_get_32bit(142 + offset) * 0.001f;
+  capacity_remaining_sensor = (float) data[142 + offset];
+  // capacity_remaining_sensor = (float) jk_get_32bit(142 + offset) * 0.001f;
   // 146   4   0x68 0x3C 0x01 0x00    Nominal_Capacity     0.001         Ah
   //  publish_state_("total_battery_capacity_setting_sensor_", (float) jk_get_32bit(146 + offset) * 0.001f);
   //
-  //  // 150   4   0x00 0x00 0x00 0x00    Cycle_Count          1.0
+  //  150   4   0x00 0x00 0x00 0x00    Cycle_Count          1.0
   //  publish_state_("charging_cycles_sensor_", (float) jk_get_32bit(150 + offset));
   //
-  //  // 154   4   0x3D 0x04 0x00 0x00    Cycle_Capacity       0.001         Ah
+  //  154   4   0x3D 0x04 0x00 0x00    Cycle_Capacity       0.001         Ah
   //  publish_state_("total_charging_cycle_capacity_sensor_", (float) jk_get_32bit(154 + offset) * 0.001f);
   //
-  //  // 158   1   0x64                   SOH                  1.0           %
+  //  158   1   0x64                   SOH                  1.0           %
   //  ESP_LOGD(TAG, "State of health: %d %%", data[158 + offset]);
   //
-  //  // 159   1   0x00                   Precharge
+  //  159   1   0x00                   Precharge
   //  ESP_LOGD(TAG, "Precharge: %s", (data[159 + offset]));
   //
-  //  // 160   2   0x79 0x04              User alarm
+  //  160   2   0x79 0x04              User alarm
   //  ESP_LOGD(TAG, "User alarm: 0x%02X 0x%02X (always 0xC5 0x09?)", data[160 + offset], data[161 + offset]);
   //
-  //  // 162   4   0xCA 0x03 0x10 0x00    Total runtime in seconds           s
+  //  162   4   0xCA 0x03 0x10 0x00    Total runtime in seconds           s
   //  publish_state_("total_runtime_sensor_", (float) jk_get_32bit(162 + offset));
   //  publish_state_("total_runtime_formatted_text_sensor_", (float)(jk_get_32bit(162 + offset)));
   //
-  //  // 166   1   0x01                   Charging mosfet enabled                      0x00: off, 0x01: on
+  //  166   1   0x01                   Charging mosfet enabled                      0x00: off, 0x01: on
   //  publish_state_("charging_binary_sensor_", (bool) data[166 + offset]);
   //
-  //  // 167   1   0x01                   Discharging mosfet enabled                   0x00: off, 0x01: on
+  //  167   1   0x01                   Discharging mosfet enabled                   0x00: off, 0x01: on
   //  publish_state_("discharging_binary_sensor_", (bool) data[167 + offset]);
   //
-  //  // 168   1   0x01                   Precharging                                  0x00: off, 0x01: on
+  //  168   1   0x01                   Precharging                                  0x00: off, 0x01: on
   //  publish_state_("precharging_binary_sensor_", (bool) data[168 + offset]);
   //
-  //  // 169   1   0x01                   Balancer working                             0x00: off, 0x01: on
+  //  169   1   0x01                   Balancer working                             0x00: off, 0x01: on
   //  // publish_state_("balancing_binary_sensor_", (bool) data[169 + offset]);
   //  ESP_LOGD(TAG, " Balancing indicator (new): %s", ((bool) data[169 + offset]));
   //
@@ -425,9 +420,6 @@ void decode_jk02_cell_info_(const std::vector<uint8_t> &data) {
   //  // bit0: Mosfet temperature sensor
   //  // bit1: Temperature sensor 1
   //  // bit2: Temperature sensor 2
-  //  // bit3: Temperature sensor 3
-  //  // bit4: Temperature sensor 4
-  //  // bit5: Temperature sensor 5
   //
   //  ESP_LOGD(TAG, "Heating: %s", ((bool) data[183 + offset]));
   //  ESP_LOGD(TAG, "Time emergency: %d s", jk_get_16bit(186 + offset));
@@ -440,9 +432,6 @@ void decode_jk02_cell_info_(const std::vector<uint8_t> &data) {
   //  ESP_LOGD(TAG, "Heating current: %d mA", jk_get_16bit(204 + offset));
   //
   //  ESP_LOGD(TAG, "Charger Plugged: %s", ((bool) data[213 + offset]));
-  //  ESP_LOGD(TAG, "Temperature sensor 3: %.1f", (float) jk_get_16bit(222 + offset));
-  //  ESP_LOGD(TAG, "Temperature sensor 4: %.1f", (float) jk_get_16bit(224 + offset));
-  //  ESP_LOGD(TAG, "Temperature sensor 5: %.1f", (float) jk_get_16bit(226 + offset));
   //  ESP_LOGD(TAG, "Time enter sleep: %u s", jk_get_32bit(238 + offset));
   //  ESP_LOGD(TAG, "PCL Module State: %s", ((bool) data[242 + offset]));
   //
@@ -457,13 +446,6 @@ void decode_jk02_cell_info_(const std::vector<uint8_t> &data) {
   //    ESP_LOGI(TAG, "  Emergency switch: %s", (raw_emergency_time_countdown > 0));
   //    publish_state_("emergency_switch_", raw_emergency_time_countdown > 0);
   //    publish_state_("emergency_time_countdown_sensor_", (float) raw_emergency_time_countdown * 1.0f);
-  //
-  //    publish_state_("temperatures_[4].temperature_sensor_",
-  //                   (float) ((int16_t) jk_get_16bit(222 + offset)) * 0.1f);
-  //    publish_state_("temperatures_[3].temperature_sensor_",
-  //                   (float) ((int16_t) jk_get_16bit(224 + offset)) * 0.1f);
-  //    publish_state_("temperatures_[2].temperature_sensor_",
-  //                   (float) ((int16_t) jk_get_16bit(226 + offset)) * 0.1f);
   //  }
 
   // 299   1   0xCD                   CRC
@@ -708,8 +690,12 @@ void setup() {
   lcd.println("Power:");
   lcd.setCursor(170, 135); // Set cursor position
   lcd.println("Cell:");
-  BLEDevice::init("");
 
+  // Start Serial 2 with the defined RX and TX pins and a baud rate of 9600
+  gpsSerial.begin(GPS_BAUD, SERIAL_8N1, RXD2, TXD2);
+  Serial.println("Serial 2 started at 9600 baud rate");
+
+  BLEDevice::init("");
   // Retrieve a Scanner and set the callback we want to use to be informed when we
   // have detected a new device.  Specify that we want active scanning and start the
   // scan to run for 5 seconds.
@@ -767,12 +753,47 @@ void loop() {
     lcd.println(" Offline   "); // Display the bms connection
     BLEDevice::getScan()->start(0);  // this is just example to start scan after disconnect, most likely there is better way to do it in arduino
   }
+    // This sketch displays information every time a new sentence is correctly encoded.
+  unsigned long start = millis();
+
+  while (millis() - start < 1000) {
+    while (gpsSerial.available() > 0) {
+      gps.encode(gpsSerial.read());
+    }
+    if (gps.location.isUpdated()) {
+      Serial.print("LAT: ");
+      latitude = String(gps.location.lat(), 6);
+      Serial.println(latitude);
+      Serial.print("LONG: "); 
+      longitude = String(gps.location.lng(), 6);
+      Serial.println(longitude);
+      Serial.print("SPEED (km/h) = "); 
+      speed = String(gps.speed.kmph(), 2);
+      Serial.println(speed);
+      Serial.print("ALT (min)= "); 
+      altitude = String(gps.altitude.meters(), 2);
+      Serial.println(altitude);
+      Serial.print("HDOP = "); 
+      hdop = String(gps.hdop.value() / 100.0, 2);
+      Serial.println(hdop);
+      Serial.print("Satellites = "); 
+      satellites = String(gps.satellites.value());
+      Serial.println(satellites);
+      Serial.print("Time in UTC: ");
+      Serial.println(String(gps.date.year()) + "-" + String(gps.date.month()) + "-" + String(gps.date.day()) + "," + String(gps.time.hour()) + ":" + String(gps.time.minute()) + ":" + String(gps.time.second()));
+      current_date = String(gps.date.year()) + "-" + String(gps.date.month()) + "-" + String(gps.date.day());
+      Serial.println(current_date);
+      utc_time = String(format_time(gps.time.hour())) + ":" + String(format_time(gps.time.minute())) + ":" + String(format_time(gps.time.second()));
+      Serial.println(utc_time);
+      Serial.println("");
+    }
+  }
   delay(1000); // Delay a second between loops.
   display();
 }
 void display() {
-  lcd.setFont(FONT_16x32);
   // top left
+  lcd.setFont(FONT_16x32);
   lcd.setCursor(15, 60); // Set cursor position
 
   if (connected == false) {
@@ -829,16 +850,16 @@ void display() {
   lcd.setCursor(15, 215); // Set cursor position
   //lcd.setFont(FONT_12x16);
   if (current <= -20) {
-      lcd.println("# # # # #> "); // power bar
+      lcd.println("#-#-#-#-#> "); // power bar
     }
     else if (current <= -15) {
-      lcd.println("# # # #>   "); // power bar
+      lcd.println("#-#-#-#>   "); // power bar
     }
     else if (current <= -10) {
-      lcd.println("# # #>     "); // power bar
+      lcd.println("#-#-#>     "); // power bar
     }
     else if (current <= -5) {
-      lcd.println("# #>       "); // power bar
+      lcd.println("#-#>       "); // power bar
     }
     else if (current <= -1) {
       lcd.println("#>         "); // power bar
@@ -884,13 +905,8 @@ void display() {
       lcd.setTextColor(TFT_RED, TFT_BLACK);
       lcd.println("Error: " + String(errors_bitmask_sensor_));
     }
-    else if (connected == false) {
-      lcd.setTextColor(TFT_GREY, TFT_BLACK);
-      lcd.println("Error: " + String(errors_bitmask_sensor_));
-    }
     else {
-      lcd.setTextColor(TFT_GREEN, TFT_BLACK);
-      lcd.println("Error: " + String(errors_bitmask_sensor_));
+      lcd.setTextColor(TFT_GREY, TFT_BLACK);
+      lcd.println("Temp: " + String(temperatures_[0].temperature_sensor_));
     }
-  //lcd.println("Error:" + String(errors_bitmask_sensor_));
 }
