@@ -1,0 +1,273 @@
+substitutions:
+  textname: bank a
+  name: jk-bms
+  bms0: "${name} A"
+  bms1: "${name} B"
+  updates: 30s
+  device_description: "Monitor and control JK-BMS A(BLE F3:1E:94), B(uart ttl)"
+  external_components_source: github://syssi/esphome-jk-bms@main
+  # bms0_mac_address: C8:47:8C:F3:1E:94
+  bms0_mac_address: C8:47:8C:EC:C8:79
+  # bms1_mac_address: 20:22:09:27:83:88
+  # Defaults to "JK02" (hardware version >= 6.0 and < 11.0)
+  # Please use "JK02_32S" if you own a new JK-BMS >= hardware version 11.0 (f.e. JK-B2A8S20P hw 11.XW, sw 11.26)
+  # Please use "JK04" if you have some old JK-BMS <= hardware version 3.0 (f.e. JK-B2A16S hw 3.0, sw. 3.3.0)
+  bms0_protocol_version: JK02_32S
+  bms1_protocol_version: JK02_32S
+  # UART settings
+  tx_pin: GPIO17
+  rx_pin: GPIO16
+
+esphome:
+  name: ${name}
+  comment: ${device_description}
+  project:
+    name: "syssi.esphome-jk-bms"
+    version: 2.1.0
+  platformio_options:
+    build_flags:
+      - "#define CONFIG_ARDUINO_LOOP_STACK_SIZE=65536"
+
+esp32:
+  board: nodemcu-32s
+  framework:
+    type: esp-idf
+    # version: latest  # recommended
+    # platform_version: 5.4.0
+    # advanced:
+    #  ignore_efuse_mac_crc: false
+    sdkconfig_options:
+      CONFIG_COMPILER_OPTIMIZATION_SIZE: y
+      CONFIG_BT_BLE_42_FEATURES_SUPPORTED: y
+      # CONFIG_BT_BLE_50_FEATURES_SUPPORTED: y
+      CONFIG_ESP_TASK_WDT_TIMEOUT_S: "10" 
+
+external_components:
+  - source: ${external_components_source}
+    refresh: 0s
+
+wifi:
+  ssid: backan
+  password: !secret wifi_password
+  # power_save_mode: none
+  manual_ip:
+    static_ip: 192.168.9.8
+    subnet: 255.255.255.0
+    gateway: 192.168.9.1
+    dns1: 8.8.4.4
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+    on_begin:
+      then:
+        - switch.turn_off: ble_client_switch0
+        - logger.log: "BLE connection suspended for OTA update"
+
+logger:
+  level: INFO # DEBUG
+  # logs:
+  #  esp32_ble_tracker: INFO
+  #  jk_bms_ble: INFO
+  #  # scheduler: DEBUG
+  #  # component: DEBUG
+  #  sensor: INFO
+  #  text_sensor: INFO  
+    # api.service: INFO
+    # api: INFO
+
+api:
+  encryption:
+    key: !secret api_key
+  reboot_timeout: 3min
+
+#web_server:
+
+time:
+  - platform: homeassistant
+    update_interval: 60min
+    timezone: CET+1
+    # id: homeassistant_time
+    on_time:
+      - seconds: 0
+        minutes: 0
+        hours: 4
+        days_of_week: MON-SUN
+        then:
+           - switch.toggle: jk_restartit
+
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 546ms
+  on_ble_advertise:
+    then:
+      - lambda: |-
+          if (x.get_name().rfind("JK-", 0) == 0) {
+            ESP_LOGI("ble_adv", "New JK-BMS found");
+            ESP_LOGI("ble_adv", "  Name: %s", x.get_name().c_str());
+            ESP_LOGI("ble_adv", "  MAC address: %s", x.address_str().c_str());
+            ESP_LOGD("ble_adv", "  Advertised service UUIDs:");
+            for (auto uuid : x.get_service_uuids()) {
+              ESP_LOGD("ble_adv", "    - %s", uuid.to_string().c_str());
+            }
+          }
+
+ble_client:
+  - mac_address: ${bms0_mac_address}
+    id: client0
+
+jk_bms_ble:
+  - ble_client_id: client0
+    protocol_version: ${bms0_protocol_version}
+    throttle: 5s
+    id: bms0
+
+binary_sensor:
+  - platform: jk_bms_ble
+    jk_bms_ble_id: bms0
+    balancing:
+      name: "${bms0} balancing"
+    charging:
+      name: "${bms0} charging"
+    discharging:
+      name: "${bms0} discharging"
+    online_status:
+      name: "${bms0} online status"
+
+button:
+  - platform: jk_bms_ble
+    jk_bms_ble_id: bms0
+    retrieve_settings:
+      name: "${bms0} retrieve settings"
+    retrieve_device_info:
+      name: "${bms0} retrieve device info"
+  #- platform: jk_bms_ble
+  #  jk_bms_ble_id: bms1
+  #  retrieve_settings:
+  #    name: "${bms1} retrieve settings"
+  #  retrieve_device_info:
+  #    name: "${bms1} retrieve device info"
+#number:
+  #- platform: jk_bms_ble
+  #  jk_bms_ble_id: bms0
+    # cell_voltage_overvoltage_recovery:
+    #  name: "${bms0} cell voltage overvoltage recovery"
+   # balance_starting_voltage:
+   #   name: "${bms0} balance starting voltage"
+
+sensor:
+  - platform: jk_bms_ble
+    jk_bms_ble_id: bms0
+    #min_cell_voltage:
+    #  name: "${bms0} min cell voltage"
+    delta_cell_voltage:
+      name: "${bms0} delta cell voltage"
+    average_cell_voltage:
+      name: "${bms0} average cell voltage"
+    current:
+      name: "${bms0} current"
+    power:
+      name: "${bms0} power"
+    charging_power:
+      name: "${bms0} charging power"
+      id: bms0_charging_power
+    discharging_power:
+      name: "${bms0} discharging power"
+      id: bms0_discharging_power
+    cell_voltage_1:
+      name: "${bms0} cell voltage 1"
+    cell_voltage_2:
+      name: "${bms0} cell voltage 2"
+    cell_voltage_3:
+      name: "${bms0} cell voltage 3"
+    cell_voltage_4:
+      name: "${bms0} cell voltage 4"
+    cell_voltage_5:
+      name: "${bms0} cell voltage 5"
+    cell_voltage_6:
+      name: "${bms0} cell voltage 6"
+    cell_voltage_7:
+      name: "${bms0} cell voltage 7"
+    cell_voltage_8:
+      name: "${bms0} cell voltage 8"
+    cell_voltage_9:
+      name: "${bms0} cell voltage 9"
+    cell_voltage_10:
+      name: "${bms0} cell voltage 10"
+    cell_voltage_11:
+      name: "${bms0} cell voltage 11"
+    cell_voltage_12:
+      name: "${bms0} cell voltage 12"
+    cell_voltage_13:
+      name: "${bms0} cell voltage 13"
+    cell_voltage_14:
+      name: "${bms0} cell voltage 14"
+    cell_voltage_15:
+      name: "${bms0} cell voltage 15"
+    cell_voltage_16:
+      name: "${bms0} cell voltage 16"
+    total_voltage:
+      name: "${bms0} total voltage"
+    temperature_sensor_1:
+      name: "${bms0} temperature sensor 1"
+    temperature_sensor_2:
+      name: "${bms0} temperature sensor 2"
+    power_tube_temperature:
+      name: "${bms0} power tube temperature"
+    capacity_remaining:
+      name: "${bms0} capacity remaining"
+    errors_bitmask:
+      name: "${bms0} errors bitmask"
+
+  - platform: total_daily_energy
+    name: "${bms0} charging energy today"
+    icon: mdi:counter
+    power_id: bms0_charging_power
+    accuracy_decimals: 2
+    unit_of_measurement: kWh
+    restore: true
+    filters:
+      - multiply: 0.001
+  - platform: total_daily_energy
+    name: "${bms0} discharging energy today"
+    icon: mdi:counter
+    power_id: bms0_discharging_power
+    accuracy_decimals: 2
+    unit_of_measurement: kWh
+    restore: true
+    filters:
+      - multiply: 0.001
+
+  - platform: uptime
+    name: Uptime
+  #- platform: debug
+  #  free:
+  #  name: Free MEM
+
+  - platform: wifi_signal
+    name: "${name} ESP wifi signal"
+    update_interval: ${updates}
+
+switch:
+  - platform: jk_bms_ble
+    jk_bms_ble_id: bms0
+    charging:
+      name: "${bms0} charging"
+    discharging:
+      name: "${bms0} discharging"
+    balancer:
+      name: "${bms0} balancer"
+  - platform: ble_client
+    ble_client_id: client0
+    id: ble_client_switch0
+    name: "${bms0} enable bluetooth connection"
+
+  - platform: restart
+    name: "${name} Restart / Reboot Device"
+    icon: "mdi:restart"
+    id: jk_restartit
+text_sensor:
+  - platform: jk_bms_ble
+    jk_bms_ble_id: bms0
+    errors:
+      name: "${bms0} errors"
